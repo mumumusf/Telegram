@@ -563,6 +563,9 @@ bot.on('message', async (msg) => {
     const userId = msg.from.id;
     const text = msg.text;
     
+    // 检查text是否存在（避免undefined错误）
+    if (!text) return;
+    
     // 跳过命令消息
     if (text.startsWith('/')) return;
     
