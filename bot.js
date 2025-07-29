@@ -20,6 +20,33 @@ let currentCronSchedule = process.env.CRON_SCHEDULE || '0 9 * * *'; // 默认每
 let publishChannel = ''; // 发布频道ID
 let isSettingChannel = false; // 是否正在设置发布频道
 
+// 安全编辑消息函数
+async function safeEditMessage(chatId, messageId, text, options = {}) {
+    try {
+        await bot.editMessageText(text, {
+            chat_id: chatId,
+            message_id: messageId,
+            ...options
+        });
+        return true;
+    } catch (error) {
+        // 如果是内容相同错误，直接忽略
+        if (error.message.includes('message is not modified')) {
+            console.log('消息内容相同，跳过编辑');
+            return true;
+        }
+        
+        // 其他错误，发送新消息
+        console.log('编辑消息失败，发送新消息:', error.message);
+        try {
+            await bot.sendMessage(chatId, text, options);
+        } catch (sendError) {
+            console.error('发送新消息也失败:', sendError.message);
+        }
+        return false;
+    }
+}
+
 // 启动消息
 console.log('🤖 Telegram新闻机器人已启动');
 console.log(`📅 定时发布设置: ${CRON_SCHEDULE}`);
@@ -246,6 +273,11 @@ bot.on('callback_query', async (query) => {
                     );
                 }
             } catch (error) {
+                // 如果是内容相同错误，直接忽略
+                if (error.message.includes('message is not modified')) {
+                    console.log('消息内容相同，跳过编辑');
+                    break;
+                }
                 console.log('编辑消息失败:', error.message);
                 // 如果编辑失败，发送新消息
                 if (newsData.length === 0) {
@@ -364,33 +396,19 @@ bot.on('callback_query', async (query) => {
             break;
             
         case 'settings':
-            try {
-                await bot.editMessageText(
-                    '⚙️ 机器人设置\n\n' +
-                    `📅 定时发布：${cronToTime(currentCronSchedule)} (中国时间)\n` +
-                    `📢 发布频道：${publishChannel || '未设置'}\n` +
-                    `📊 当前新闻：${newsData.length} 条\n` +
-                    `🗑️ 自动清空：发布后自动清空\n\n` +
-                    '💡 点击下方按钮进行设置',
-                    {
-                        chat_id: chatId,
-                        message_id: query.message.message_id,
-                        reply_markup: createSettingsMenu().reply_markup
-                    }
-                );
-            } catch (error) {
-                console.log('编辑消息失败:', error.message);
-                // 如果编辑失败，发送新消息
-                await bot.sendMessage(chatId, 
-                    '⚙️ 机器人设置\n\n' +
-                    `📅 定时发布：${cronToTime(currentCronSchedule)} (中国时间)\n` +
-                    `📢 发布频道：${publishChannel || '未设置'}\n` +
-                    `📊 当前新闻：${newsData.length} 条\n` +
-                    `🗑️ 自动清空：发布后自动清空\n\n` +
-                    '💡 点击下方按钮进行设置',
-                    createSettingsMenu()
-                );
-            }
+            await safeEditMessage(
+                chatId,
+                query.message.message_id,
+                '⚙️ 机器人设置\n\n' +
+                `📅 定时发布：${cronToTime(currentCronSchedule)} (中国时间)\n` +
+                `📢 发布频道：${publishChannel || '未设置'}\n` +
+                `📊 当前新闻：${newsData.length} 条\n` +
+                `🗑️ 自动清空：发布后自动清空\n\n` +
+                '💡 点击下方按钮进行设置',
+                {
+                    reply_markup: createSettingsMenu().reply_markup
+                }
+            );
             break;
             
         case 'set_time':
@@ -412,47 +430,25 @@ bot.on('callback_query', async (query) => {
             break;
             
         case 'view_settings':
-            try {
-                await bot.editMessageText(
-                    '📅 当前设置详情\n\n' +
-                    `🕐 发送时间：${cronToTime(currentCronSchedule)} (中国时间)\n` +
-                    `📢 发布频道：${publishChannel || '未设置'}\n` +
-                    `📊 当前新闻：${newsData.length} 条\n` +
-                    `🗑️ 自动清空：发布后自动清空\n\n` +
-                    '💡 如需修改设置，请点击相应按钮',
-                    {
-                        chat_id: chatId,
-                        message_id: query.message.message_id,
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: '🕐 修改时间', callback_data: 'set_time' }],
-                                [{ text: '📢 修改频道', callback_data: 'set_channel' }],
-                                [{ text: '🔙 返回设置', callback_data: 'settings' }]
-                            ]
-                        }
+            await safeEditMessage(
+                chatId,
+                query.message.message_id,
+                '📅 当前设置详情\n\n' +
+                `🕐 发送时间：${cronToTime(currentCronSchedule)} (中国时间)\n` +
+                `📢 发布频道：${publishChannel || '未设置'}\n` +
+                `📊 当前新闻：${newsData.length} 条\n` +
+                `🗑️ 自动清空：发布后自动清空\n\n` +
+                '💡 如需修改设置，请点击相应按钮',
+                {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🕐 修改时间', callback_data: 'set_time' }],
+                            [{ text: '📢 修改频道', callback_data: 'set_channel' }],
+                            [{ text: '🔙 返回设置', callback_data: 'settings' }]
+                        ]
                     }
-                );
-            } catch (error) {
-                console.log('编辑消息失败:', error.message);
-                // 如果编辑失败，发送新消息
-                await bot.sendMessage(chatId, 
-                    '📅 当前设置详情\n\n' +
-                    `🕐 发送时间：${cronToTime(currentCronSchedule)} (中国时间)\n` +
-                    `📢 发布频道：${publishChannel || '未设置'}\n` +
-                    `📊 当前新闻：${newsData.length} 条\n` +
-                    `🗑️ 自动清空：发布后自动清空\n\n` +
-                    '💡 如需修改设置，请点击相应按钮',
-                    {
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: '🕐 修改时间', callback_data: 'set_time' }],
-                                [{ text: '📢 修改频道', callback_data: 'set_channel' }],
-                                [{ text: '🔙 返回设置', callback_data: 'settings' }]
-                            ]
-                        }
-                    }
-                );
-            }
+                }
+            );
             break;
             
         case 'confirm_clear':
@@ -598,32 +594,27 @@ bot.on('callback_query', async (query) => {
             break;
 
         case 'set_channel':
-            try {
-                await bot.editMessageText(
-                    '📢 设置发布频道\n\n' +
-                    `当前发布频道：${publishChannel || '未设置'}\n\n` +
-                    '请按以下步骤设置：\n' +
-                    '1️⃣ 创建一个Telegram频道或群组\n' +
-                    '2️⃣ 将机器人添加为管理员\n' +
-                    '3️⃣ 发送频道/群组的用户名或ID\n' +
-                    '   例如：@mychannel 或 -1001234567890\n\n' +
-                    '💡 设置后新闻汇总会发布到该频道',
-                    {
-                        chat_id: chatId,
-                        message_id: query.message.message_id,
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: '🔙 返回设置', callback_data: 'settings' }]
-                            ]
-                        }
+            await safeEditMessage(
+                chatId,
+                query.message.message_id,
+                '📢 设置发布频道\n\n' +
+                `当前发布频道：${publishChannel || '未设置'}\n\n` +
+                '请按以下步骤设置：\n' +
+                '1️⃣ 创建一个Telegram频道或群组\n' +
+                '2️⃣ 将机器人添加为管理员\n' +
+                '3️⃣ 发送频道/群组的用户名或ID\n' +
+                '   例如：@mychannel 或 -1001234567890\n\n' +
+                '💡 设置后新闻汇总会发布到该频道',
+                {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🔙 返回设置', callback_data: 'settings' }]
+                        ]
                     }
-                );
-                // 设置状态，等待用户输入频道信息
-                isSettingChannel = true;
-            } catch (error) {
-                console.log('编辑消息失败:', error.message);
-                await bot.sendMessage(chatId, '📢 设置发布频道功能暂时不可用，请稍后再试');
-            }
+                }
+            );
+            // 设置状态，等待用户输入频道信息
+            isSettingChannel = true;
             break;
     }
 });
