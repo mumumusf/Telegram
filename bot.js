@@ -7,7 +7,21 @@ const BOT_TOKEN = '8293450905:AAElkk3KoihHablLfYa0UdNFKLpQahaHQEY';
 const CRON_SCHEDULE = process.env.CRON_SCHEDULE || '0 9 * * *'; // 默认每天上午9点
 
 // 创建机器人实例
-const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+const bot = new TelegramBot(BOT_TOKEN, { 
+    polling: {
+        interval: 1000,
+        autoStart: true,
+        params: {
+            timeout: 30
+        }
+    },
+    request: {
+        agentOptions: {
+            keepAlive: true,
+            family: 4
+        }
+    }
+});
 
 // 存储新闻数据
 let newsData = [];
@@ -19,6 +33,17 @@ let isSettingTime = false;
 let currentCronSchedule = process.env.CRON_SCHEDULE || '0 9 * * *'; // 默认每天上午9点
 let publishChannel = ''; // 发布频道ID
 let isSettingChannel = false; // 是否正在设置发布频道
+
+// HTML转义函数，防止特殊字符破坏HTML结构
+function escapeHtml(text) {
+    if (!text) return '';
+    return text.toString()
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 
 // 安全编辑消息函数
 async function safeEditMessage(chatId, messageId, text, options = {}) {
@@ -165,234 +190,154 @@ bot.onText(/\/start/, async (msg) => {
 
 // 处理回调查询（按钮点击）
 bot.on('callback_query', async (query) => {
-    const chatId = query.message.chat.id;
-    const userId = query.from.id;
-    const data = query.data;
-    
-    // 立即回答回调查询，避免超时
     try {
-        await bot.answerCallbackQuery(query.id);
-    } catch (error) {
-        // 忽略超时错误，这是正常现象
-        if (error.message.includes('query is too old') || error.message.includes('timeout expired')) {
-            // 静默处理，不输出日志
-        } else {
-            console.log('回调查询回答失败:', error.message);
+        const chatId = query.message.chat.id;
+        const userId = query.from.id;
+        const data = query.data;
+        
+        // 立即回答回调查询，避免超时
+        try {
+            await bot.answerCallbackQuery(query.id);
+        } catch (error) {
+            // 忽略超时错误，这是正常现象
+            if (error.message.includes('query is too old') || error.message.includes('timeout expired')) {
+                // 静默处理，不输出日志
+            } else {
+                console.log('回调查询回答失败:', error.message);
+            }
         }
-    }
     
     switch (data) {
         case 'add_news':
             isCollectingNews = true;
-            try {
-                await bot.editMessageText(
-                    '📝 开始添加新闻\n\n' +
-                    '请发送新闻板块：\n' +
-                    '💡 例如：科技、财经、体育等',
-                    {
-                        chat_id: chatId,
-                        message_id: query.message.message_id,
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: '🔙 返回主菜单', callback_data: 'main_menu' }]
-                            ]
-                        }
+            await safeEditMessage(
+                chatId,
+                query.message.message_id,
+                '📝 开始添加新闻\n\n' +
+                '请发送新闻板块：\n' +
+                '💡 例如：科技、财经、体育等',
+                {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🔙 返回主菜单', callback_data: 'main_menu' }]
+                        ]
                     }
-                );
-            } catch (error) {
-                console.log('编辑消息失败:', error.message);
-                // 如果编辑失败，发送新消息
-                await bot.sendMessage(chatId, 
-                    '📝 开始添加新闻\n\n' +
-                    '请发送新闻板块：\n' +
-                    '💡 例如：科技、财经、体育等',
-                    {
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: '🔙 返回主菜单', callback_data: 'main_menu' }]
-                            ]
-                        }
-                    }
-                );
-            }
+                }
+            );
             break;
             
         case 'list_news':
-            try {
-                if (newsData.length === 0) {
-                    await bot.editMessageText(
-                        '📭 暂无新闻数据',
-                        {
-                            chat_id: chatId,
-                            message_id: query.message.message_id,
-                            reply_markup: {
-                                inline_keyboard: [
-                                    [{ text: '🔙 返回主菜单', callback_data: 'main_menu' }]
-                                ]
-                            }
-                        }
-                    );
-                } else {
-                    // 按板块分组新闻
-                    const newsBySection = {};
-                    newsData.forEach(news => {
-                        if (!newsBySection[news.section]) {
-                            newsBySection[news.section] = [];
-                        }
-                        newsBySection[news.section].push(news);
-                    });
-                    
-                    let message = `📋 已添加 ${newsData.length} 条新闻：\n\n`;
-                    
-                    // 按板块组织显示
-                    Object.keys(newsBySection).forEach((section, sectionIndex) => {
-                        message += `📌 ${section}\n`;
-                        message += `${'─'.repeat(20)}\n`;
-                        
-                        newsBySection[section].forEach((news, newsIndex) => {
-                            if (news.hasLink) {
-                                message += `${newsIndex + 1}. <a href="${news.link}">📰 ${news.title}</a>\n\n`;
-                            } else {
-                                message += `${newsIndex + 1}. 📰 ${news.title}\n\n`;
-                            }
-                        });
-                    });
-                    
-                    await bot.editMessageText(
-                        message,
-                        {
-                            chat_id: chatId,
-                            message_id: query.message.message_id,
-                            parse_mode: 'HTML',
-                            reply_markup: {
-                                inline_keyboard: [
-                                    [{ text: '🔙 返回主菜单', callback_data: 'main_menu' }]
-                                ]
-                            }
-                        }
-                    );
-                }
-            } catch (error) {
-                // 如果是内容相同错误，直接忽略
-                if (error.message.includes('message is not modified')) {
-                    console.log('消息内容相同，跳过编辑');
-                    break;
-                }
-                console.log('编辑消息失败:', error.message);
-                // 如果编辑失败，发送新消息
-                if (newsData.length === 0) {
-                    await bot.sendMessage(chatId, '📭 暂无新闻数据', {
+            if (newsData.length === 0) {
+                await safeEditMessage(
+                    chatId,
+                    query.message.message_id,
+                    '📭 暂无新闻数据',
+                    {
                         reply_markup: {
                             inline_keyboard: [
                                 [{ text: '🔙 返回主菜单', callback_data: 'main_menu' }]
                             ]
                         }
-                    });
-                } else {
-                    const newsBySection = {};
-                    newsData.forEach(news => {
-                        if (!newsBySection[news.section]) {
-                            newsBySection[news.section] = [];
+                    }
+                );
+            } else {
+                // 按板块分组新闻
+                const newsBySection = {};
+                newsData.forEach(news => {
+                    if (!newsBySection[news.section]) {
+                        newsBySection[news.section] = [];
+                    }
+                    newsBySection[news.section].push(news);
+                });
+                
+                let message = `📋 已添加 ${newsData.length} 条新闻：\n\n`;
+                
+                // 按板块组织显示
+                Object.keys(newsBySection).forEach((section, sectionIndex) => {
+                    message += `📌 ${section}\n`;
+                    message += `${'─'.repeat(20)}\n`;
+                    
+                    newsBySection[section].forEach((news, newsIndex) => {
+                        if (news.hasLink) {
+                            message += `${newsIndex + 1}. <a href="${escapeHtml(news.link)}">📰 ${escapeHtml(news.title)}</a>\n\n`;
+                        } else {
+                            message += `${newsIndex + 1}. 📰 ${escapeHtml(news.title)}\n\n`;
                         }
-                        newsBySection[news.section].push(news);
                     });
-                    
-                    let message = `📋 已添加 ${newsData.length} 条新闻：\n\n`;
-                    Object.keys(newsBySection).forEach((section, sectionIndex) => {
-                        message += `📌 ${section}\n`;
-                        message += `${'─'.repeat(20)}\n`;
-                        newsBySection[section].forEach((news, newsIndex) => {
-                            if (news.hasLink) {
-                                message += `${newsIndex + 1}. <a href="${news.link}">📰 ${news.title}</a>\n\n`;
-                            } else {
-                                message += `${newsIndex + 1}. 📰 ${news.title}\n\n`;
-                            }
-                        });
-                    });
-                    
-                    await bot.sendMessage(chatId, message, {
+                });
+                
+                await safeEditMessage(
+                    chatId,
+                    query.message.message_id,
+                    message,
+                    {
                         parse_mode: 'HTML',
                         reply_markup: {
                             inline_keyboard: [
                                 [{ text: '🔙 返回主菜单', callback_data: 'main_menu' }]
                             ]
                         }
-                    });
-                }
+                    }
+                );
             }
             break;
             
         case 'clear_news':
-            try {
-                await bot.editMessageText(
-                    '🗑️ 确定要清空所有新闻吗？\n\n' +
-                    `当前共有 ${newsData.length} 条新闻`,
-                    {
-                        chat_id: chatId,
-                        message_id: query.message.message_id,
-                        reply_markup: createConfirmKeyboard('clear').reply_markup
-                    }
-                );
-            } catch (error) {
-                console.log('编辑消息失败:', error.message);
-                await bot.sendMessage(chatId, '🗑️ 清空新闻功能暂时不可用，请稍后再试');
-            }
+            await safeEditMessage(
+                chatId,
+                query.message.message_id,
+                '🗑️ 确定要清空所有新闻吗？\n\n' +
+                `当前共有 ${newsData.length} 条新闻`,
+                {
+                    reply_markup: createConfirmKeyboard('clear').reply_markup
+                }
+            );
             break;
             
         case 'publish_now':
-            try {
-                await bot.editMessageText(
-                    '📤 确定要立即发布新闻吗？\n\n' +
-                    `当前共有 ${newsData.length} 条新闻\n` +
-                    '⚠️ 发布后会自动清空所有新闻',
-                    {
-                        chat_id: chatId,
-                        message_id: query.message.message_id,
-                        reply_markup: createConfirmKeyboard('publish').reply_markup
-                    }
-                );
-            } catch (error) {
-                console.log('编辑消息失败:', error.message);
-                await bot.sendMessage(chatId, '📤 发布功能暂时不可用，请稍后再试');
-            }
+            await safeEditMessage(
+                chatId,
+                query.message.message_id,
+                '📤 确定要立即发布新闻吗？\n\n' +
+                `当前共有 ${newsData.length} 条新闻\n` +
+                '⚠️ 发布后会自动清空所有新闻',
+                {
+                    reply_markup: createConfirmKeyboard('publish').reply_markup
+                }
+            );
             break;
             
         case 'help':
-            try {
-                await bot.editMessageText(
-                    '📖 使用说明：\n\n' +
-                    '方法一：\n' +
-                    '1️⃣ 点击"添加新闻"按钮\n' +
-                    '2️⃣ 按提示输入新闻板块\n' +
-                    '3️⃣ 输入新闻标题\n' +
-                    '4️⃣ 输入新闻链接（如果没有链接，输入"无"）\n' +
-                    '5️⃣ 重复步骤2-4添加更多新闻\n' +
-                    '6️⃣ 输入 "完成" 结束添加\n\n' +
-                    '方法二：\n' +
-                    '直接发送：板块|标题|链接\n' +
-                    '例如：科技|重要新闻|https://example.com\n\n' +
-                    '方法三：\n' +
-                    '直接发送：板块|标题（无链接）\n' +
-                    '例如：科技|重要新闻\n\n' +
-                    '⏰ 机器人会在设定时间自动发布新闻汇总\n' +
-                    '🕐 可在"设置"中修改发送时间\n' +
-                    '📢 请先设置发布频道，新闻会发布到频道\n' +
-                    '🗑️ 发布后会自动清空新闻，为第二天做准备\n' +
-                    `当前定时设置：${cronToTime(currentCronSchedule)} (中国时间)`,
-                    {
-                        chat_id: chatId,
-                        message_id: query.message.message_id,
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: '🔙 返回主菜单', callback_data: 'main_menu' }]
-                            ]
-                        }
+            await safeEditMessage(
+                chatId,
+                query.message.message_id,
+                '📖 使用说明：\n\n' +
+                '方法一：\n' +
+                '1️⃣ 点击"添加新闻"按钮\n' +
+                '2️⃣ 按提示输入新闻板块\n' +
+                '3️⃣ 输入新闻标题\n' +
+                '4️⃣ 输入新闻链接（如果没有链接，输入"无"）\n' +
+                '5️⃣ 重复步骤2-4添加更多新闻\n' +
+                '6️⃣ 输入 "完成" 结束添加\n\n' +
+                '方法二：\n' +
+                '直接发送：板块|标题|链接\n' +
+                '例如：科技|重要新闻|https://example.com\n\n' +
+                '方法三：\n' +
+                '直接发送：板块|标题（无链接）\n' +
+                '例如：科技|重要新闻\n\n' +
+                '⏰ 机器人会在设定时间自动发布新闻汇总\n' +
+                '🕐 可在"设置"中修改发送时间\n' +
+                '📢 请先设置发布频道，新闻会发布到频道\n' +
+                '🗑️ 发布后会自动清空新闻，为第二天做准备\n' +
+                `当前定时设置：${cronToTime(currentCronSchedule)} (中国时间)`,
+                {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🔙 返回主菜单', callback_data: 'main_menu' }]
+                        ]
                     }
-                );
-            } catch (error) {
-                console.log('编辑消息失败:', error.message);
-                await bot.sendMessage(chatId, '📖 帮助功能暂时不可用，请稍后再试');
-            }
+                }
+            );
             break;
             
         case 'settings':
@@ -412,21 +357,16 @@ bot.on('callback_query', async (query) => {
             break;
             
         case 'set_time':
-            try {
-                await bot.editMessageText(
-                    '🕐 设置每日发送时间\n\n' +
-                    `当前设置：${cronToTime(currentCronSchedule)} (中国时间)\n` +
-                    '请选择新的发送时间：',
-                    {
-                        chat_id: chatId,
-                        message_id: query.message.message_id,
-                        reply_markup: createTimeSelectionKeyboard().reply_markup
-                    }
-                );
-            } catch (error) {
-                console.log('编辑消息失败:', error.message);
-                await bot.sendMessage(chatId, '🕐 时间设置功能暂时不可用，请稍后再试');
-            }
+            await safeEditMessage(
+                chatId,
+                query.message.message_id,
+                '🕐 设置每日发送时间\n\n' +
+                `当前设置：${cronToTime(currentCronSchedule)} (中国时间)\n` +
+                '请选择新的发送时间：',
+                {
+                    reply_markup: createTimeSelectionKeyboard().reply_markup
+                }
+            );
             break;
             
         case 'view_settings':
@@ -453,85 +393,61 @@ bot.on('callback_query', async (query) => {
             
         case 'confirm_clear':
             newsData = [];
-            try {
-                await bot.editMessageText(
-                    '✅ 所有新闻已清空！',
-                    {
-                        chat_id: chatId,
-                        message_id: query.message.message_id,
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: '🔙 返回主菜单', callback_data: 'main_menu' }]
-                            ]
-                        }
+            await safeEditMessage(
+                chatId,
+                query.message.message_id,
+                '✅ 所有新闻已清空！',
+                {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🔙 返回主菜单', callback_data: 'main_menu' }]
+                        ]
                     }
-                );
-            } catch (error) {
-                console.log('编辑消息失败:', error.message);
-                await bot.sendMessage(chatId, '✅ 所有新闻已清空！');
-            }
+                }
+            );
             break;
             
         case 'confirm_publish':
             await publishNews();
-            try {
-                await bot.editMessageText(
-                    '✅ 新闻已发布并保存到日志文件！',
-                    {
-                        chat_id: chatId,
-                        message_id: query.message.message_id,
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: '🔙 返回主菜单', callback_data: 'main_menu' }]
-                            ]
-                        }
+            await safeEditMessage(
+                chatId,
+                query.message.message_id,
+                '✅ 新闻已发布到频道！',
+                {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🔙 返回主菜单', callback_data: 'main_menu' }]
+                        ]
                     }
-                );
-            } catch (error) {
-                console.log('编辑消息失败:', error.message);
-                await bot.sendMessage(chatId, '✅ 新闻已发布并保存到日志文件！');
-            }
+                }
+            );
             break;
             
         case 'cancel':
-            try {
-                await bot.editMessageText(
-                    '❌ 操作已取消',
-                    {
-                        chat_id: chatId,
-                        message_id: query.message.message_id,
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: '🔙 返回主菜单', callback_data: 'main_menu' }]
-                            ]
-                        }
+            await safeEditMessage(
+                chatId,
+                query.message.message_id,
+                '❌ 操作已取消',
+                {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🔙 返回主菜单', callback_data: 'main_menu' }]
+                        ]
                     }
-                );
-            } catch (error) {
-                console.log('编辑消息失败:', error.message);
-                await bot.sendMessage(chatId, '❌ 操作已取消');
-            }
+                }
+            );
             break;
             
         case 'main_menu':
-            try {
-                await bot.editMessageText(
-                    '👋 欢迎使用智能新闻发布机器人！\n\n' +
-                    '🎯 请选择您要进行的操作：',
-                    {
-                        chat_id: chatId,
-                        message_id: query.message.message_id,
-                        reply_markup: createMainMenu().reply_markup
-                    }
-                );
-            } catch (error) {
-                console.log('编辑消息失败:', error.message);
-                await bot.sendMessage(chatId, 
-                    '👋 欢迎使用智能新闻发布机器人！\n\n' +
-                    '🎯 请选择您要进行的操作：',
-                    createMainMenu()
-                );
-            }
+            await safeEditMessage(
+                chatId,
+                query.message.message_id,
+                '👋 欢迎使用智能新闻发布机器人！\n\n' +
+                '🎯 请选择您要进行的操作：',
+                {
+                    reply_markup: createMainMenu().reply_markup
+                }
+            );
             break;
             
         case 'time_06:00':
@@ -571,26 +487,21 @@ bot.on('callback_query', async (query) => {
                 timezone: "Asia/Shanghai"
             });
             
-            try {
-                await bot.editMessageText(
-                    `✅ 发送时间已更新！\n\n` +
-                    `🕐 新的发送时间：${selectedTime} (中国时间)\n` +
-                    `📅 Cron表达式：${newCronSchedule}\n\n` +
-                    '💡 机器人将在每天指定时间自动发布新闻汇总',
-                    {
-                        chat_id: chatId,
-                        message_id: query.message.message_id,
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: '🔙 返回设置', callback_data: 'settings' }]
-                            ]
-                        }
+            await safeEditMessage(
+                chatId,
+                query.message.message_id,
+                `✅ 发送时间已更新！\n\n` +
+                `🕐 新的发送时间：${selectedTime} (中国时间)\n` +
+                `📅 Cron表达式：${newCronSchedule}\n\n` +
+                '💡 机器人将在每天指定时间自动发布新闻汇总',
+                {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🔙 返回设置', callback_data: 'settings' }]
+                        ]
                     }
-                );
-            } catch (error) {
-                console.log('编辑消息失败:', error.message);
-                await bot.sendMessage(chatId, `✅ 发送时间已更新为 ${selectedTime} (中国时间)`);
-            }
+                }
+            );
             break;
 
         case 'set_channel':
@@ -617,19 +528,29 @@ bot.on('callback_query', async (query) => {
             isSettingChannel = true;
             break;
     }
+    } catch (error) {
+        console.error('❌ 回调查询处理错误:', error.message);
+        // 尝试发送错误消息给用户
+        try {
+            await bot.sendMessage(query.message.chat.id, '❌ 处理请求时发生错误，请稍后重试');
+        } catch (sendError) {
+            console.error('❌ 发送错误消息失败:', sendError.message);
+        }
+    }
 });
 
 // 处理文本消息
 bot.on('message', async (msg) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
-    const text = msg.text;
-    
-    // 检查text是否存在（避免undefined错误）
-    if (!text) return;
-    
-    // 跳过命令消息
-    if (text.startsWith('/')) return;
+    try {
+        const chatId = msg.chat.id;
+        const userId = msg.from.id;
+        const text = msg.text;
+        
+        // 检查text是否存在（避免undefined错误）
+        if (!text) return;
+        
+        // 跳过命令消息
+        if (text.startsWith('/')) return;
     
     // 如果正在设置频道
     if (isSettingChannel) {
@@ -777,6 +698,15 @@ bot.on('message', async (msg) => {
             currentNewsLink = '';
         }
     }
+    } catch (error) {
+        console.error('❌ 文本消息处理错误:', error.message);
+        // 尝试发送错误消息给用户
+        try {
+            await bot.sendMessage(msg.chat.id, '❌ 处理消息时发生错误，请稍后重试');
+        } catch (sendError) {
+            console.error('❌ 发送错误消息失败:', sendError.message);
+        }
+    }
 });
 
 // 验证URL格式
@@ -818,9 +748,9 @@ async function publishNews() {
             
             newsBySection[section].forEach((news, newsIndex) => {
                 if (news.hasLink) {
-                    message += `${newsIndex + 1}. <a href="${news.link}">📰 ${news.title}</a>\n\n`;
+                    message += `${newsIndex + 1}. <a href="${escapeHtml(news.link)}">📰 ${escapeHtml(news.title)}</a>\n\n`;
                 } else {
-                    message += `${newsIndex + 1}. 📰 ${news.title}\n\n`;
+                    message += `${newsIndex + 1}. 📰 ${escapeHtml(news.title)}\n\n`;
                 }
             });
         });
@@ -873,11 +803,19 @@ global.currentCronJob = cron.schedule(CRON_SCHEDULE, async () => {
 
 // 错误处理
 bot.on('polling_error', (error) => {
-    console.error('❌ 轮询错误:', error);
+    // 忽略常见的网络错误，避免日志污染
+    if (error.code === 'EFATAL' || error.code === 'ENOTFOUND' || error.code === 'ETIMEDOUT') {
+        console.log('🌐 网络连接问题，等待重连...');
+        return;
+    }
+    
+    // 其他错误记录但继续运行
+    console.error('❌ 轮询错误:', error.message || error);
 });
 
 bot.on('error', (error) => {
-    console.error('❌ 机器人错误:', error);
+    // 记录错误但不退出
+    console.error('❌ 机器人错误:', error.message || error);
 });
 
 // 优雅关闭
