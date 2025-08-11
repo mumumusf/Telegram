@@ -34,6 +34,18 @@ let currentCronSchedule = process.env.CRON_SCHEDULE || '0 9 * * *'; // 默认每
 let publishChannel = ''; // 发布频道ID
 let isSettingChannel = false; // 是否正在设置发布频道
 
+// 预定义的新闻板块
+const predefinedSections = [
+    '📖 網站文章',
+    '🐧 推特',
+    '👱🏻‍♂️ Alvin',
+    '📸 影片',
+    '🎵 Podcast',
+    '✍️ DeFi 週報',
+    '♦️ 幣研精選每日新聞',
+    '♦️ 文章分享'
+];
+
 // HTML转义函数，防止特殊字符破坏HTML结构
 function escapeHtml(text) {
     if (!text) return '';
@@ -117,6 +129,30 @@ function createSettingsMenu() {
                     { text: '🔙 返回主菜单', callback_data: 'main_menu' }
                 ]
             ]
+        }
+    };
+}
+
+// 创建板块选择键盘
+function createSectionSelectionKeyboard() {
+    const keyboard = [];
+    
+    // 每行2个按钮
+    for (let i = 0; i < predefinedSections.length; i += 2) {
+        const row = [];
+        row.push({ text: predefinedSections[i], callback_data: `section_${i}` });
+        if (i + 1 < predefinedSections.length) {
+            row.push({ text: predefinedSections[i + 1], callback_data: `section_${i + 1}` });
+        }
+        keyboard.push(row);
+    }
+    
+    // 添加返回按钮
+    keyboard.push([{ text: '🔙 返回主菜单', callback_data: 'main_menu' }]);
+    
+    return {
+        reply_markup: {
+            inline_keyboard: keyboard
         }
     };
 }
@@ -209,20 +245,12 @@ bot.on('callback_query', async (query) => {
     
     switch (data) {
         case 'add_news':
-            isCollectingNews = true;
             await safeEditMessage(
                 chatId,
                 query.message.message_id,
-                '📝 开始添加新闻\n\n' +
-                '请发送新闻板块：\n' +
-                '💡 例如：科技、财经、体育等',
-                {
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: '🔙 返回主菜单', callback_data: 'main_menu' }]
-                        ]
-                    }
-                }
+                '📝 选择新闻板块\n\n' +
+                '请选择要添加新闻的板块：',
+                createSectionSelectionKeyboard()
             );
             break;
             
@@ -254,14 +282,13 @@ bot.on('callback_query', async (query) => {
                 
                 // 按板块组织显示
                 Object.keys(newsBySection).forEach((section, sectionIndex) => {
-                    message += `📌 ${section}\n`;
-                    message += `${'─'.repeat(20)}\n`;
+                    message += `${section}\n`;
                     
                     newsBySection[section].forEach((news, newsIndex) => {
                         if (news.hasLink) {
-                            message += `${newsIndex + 1}. <a href="${escapeHtml(news.link)}">📰 ${escapeHtml(news.title)}</a>\n\n`;
+                            message += `<a href="${escapeHtml(news.link)}">${escapeHtml(news.title)}</a>\n\n`;
                         } else {
-                            message += `${newsIndex + 1}. 📰 ${escapeHtml(news.title)}\n\n`;
+                            message += `${escapeHtml(news.title)}\n\n`;
                         }
                     });
                 });
@@ -320,11 +347,22 @@ bot.on('callback_query', async (query) => {
                 '5️⃣ 重复步骤2-4添加更多新闻\n' +
                 '6️⃣ 输入 "完成" 结束添加\n\n' +
                 '方法二：\n' +
-                '直接发送：板块|标题|链接\n' +
-                '例如：科技|重要新闻|https://example.com\n\n' +
+                '直接发送：板块 标题 链接\n' +
+                '例如：網站文章 重要新闻 https://example.com\n\n' +
                 '方法三：\n' +
-                '直接发送：板块|标题（无链接）\n' +
-                '例如：科技|重要新闻\n\n' +
+                '直接发送：板块 标题（无链接）\n' +
+                '例如：推特 重要消息\n\n' +
+                '💡 板块名称支持简写：\n' +
+                '網站文章 → 網站 or 文章\n' +
+                '推特 → 推特\n' +
+                'Alvin → Alvin\n' +
+                '影片 → 影片\n' +
+                'Podcast → Podcast\n' +
+                'DeFi → DeFi\n' +
+                '新聞 → 新聞 or 幣研\n' +
+                '分享 → 分享\n\n' +
+                '可用板块：\n' +
+                predefinedSections.join('\n') + '\n\n' +
                 '⏰ 机器人会在设定时间自动发布新闻汇总\n' +
                 '🕐 可在"设置"中修改发送时间\n' +
                 '📢 请先设置发布频道，新闻会发布到频道\n' +
@@ -527,6 +565,35 @@ bot.on('callback_query', async (query) => {
             // 设置状态，等待用户输入频道信息
             isSettingChannel = true;
             break;
+
+        // 处理板块选择
+        case 'section_0':
+        case 'section_1':
+        case 'section_2':
+        case 'section_3':
+        case 'section_4':
+        case 'section_5':
+        case 'section_6':
+        case 'section_7':
+            const sectionIndex = parseInt(data.replace('section_', ''));
+            currentNewsSection = predefinedSections[sectionIndex];
+            isCollectingNews = true;
+            
+            await safeEditMessage(
+                chatId,
+                query.message.message_id,
+                `📌 已选择板块：${currentNewsSection}\n\n` +
+                '请发送新闻标题：',
+                {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🔙 重新选择板块', callback_data: 'add_news' }],
+                            [{ text: '🔙 返回主菜单', callback_data: 'main_menu' }]
+                        ]
+                    }
+                }
+            );
+            break;
     }
     } catch (error) {
         console.error('❌ 回调查询处理错误:', error.message);
@@ -566,17 +633,55 @@ bot.on('message', async (msg) => {
         return;
     }
     
-    // 检查是否是 "板块|标题|链接" 格式
-    if (text.includes('|')) {
-        const parts = text.split('|');
-        if (parts.length === 3) {
-            const section = parts[0].trim();
-            const title = parts[1].trim();
-            const link = parts[2].trim();
+    // 检查是否是空格分隔的格式：板块名称 标题 链接
+    const parts = text.trim().split(/\s+/);
+    
+    if (parts.length >= 2) {
+        // 第一个词是板块名称
+        let inputSection = parts[0];
+        
+        // 查找匹配的预定义板块（支持部分匹配）
+        let finalSection = predefinedSections[0]; // 默认使用第一个板块
+        
+        for (const section of predefinedSections) {
+            if (section.includes(inputSection) || inputSection.includes(section.replace(/[^\u4e00-\u9fa5]/g, ''))) {
+                finalSection = section;
+                break;
+            }
+        }
+        
+        if (parts.length === 2) {
+            // 只有板块和标题，没有链接
+            const title = parts.slice(1).join(' ');
+            
+            newsData.push({
+                section: finalSection,
+                title: title,
+                link: '',
+                hasLink: false,
+                timestamp: new Date().toISOString(),
+                addedBy: userId
+            });
+            
+            await bot.sendMessage(chatId, 
+                `✅ 新闻已添加：\n📌 板块：${finalSection}\n标题：${title}\n💡 无链接`,
+                {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🔙 返回主菜单', callback_data: 'main_menu' }]
+                        ]
+                    }
+                }
+            );
+            return;
+        } else if (parts.length >= 3) {
+            // 有板块、标题和链接
+            const link = parts[parts.length - 1]; // 最后一个词是链接
+            const title = parts.slice(1, -1).join(' '); // 中间的词组成标题
             
             if (isValidUrl(link)) {
                 newsData.push({
-                    section: section,
+                    section: finalSection,
                     title: title,
                     link: link,
                     hasLink: true,
@@ -585,7 +690,7 @@ bot.on('message', async (msg) => {
                 });
                 
                 await bot.sendMessage(chatId, 
-                    `✅ 新闻已添加：\n📌 板块：${section}\n📰 标题：${title}\n🔗 链接：${link}`,
+                    `✅ 新闻已添加：\n📌 板块：${finalSection}\n标题：${title}\n🔗 链接：${link}`,
                     {
                         reply_markup: {
                             inline_keyboard: [
@@ -596,34 +701,30 @@ bot.on('message', async (msg) => {
                 );
                 return;
             } else {
-                await bot.sendMessage(chatId, '❌ 链接格式不正确，请使用：板块|标题|链接');
+                // 如果最后一个词不是有效链接，则把所有词都当作标题
+                const titleAll = parts.slice(1).join(' ');
+                
+                newsData.push({
+                    section: finalSection,
+                    title: titleAll,
+                    link: '',
+                    hasLink: false,
+                    timestamp: new Date().toISOString(),
+                    addedBy: userId
+                });
+                
+                await bot.sendMessage(chatId, 
+                    `✅ 新闻已添加：\n📌 板块：${finalSection}\n标题：${titleAll}\n💡 无链接`,
+                    {
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '🔙 返回主菜单', callback_data: 'main_menu' }]
+                            ]
+                        }
+                    }
+                );
                 return;
             }
-        } else if (parts.length === 2) {
-            // 只有板块和标题，没有链接
-            const section = parts[0].trim();
-            const title = parts[1].trim();
-            
-            newsData.push({
-                section: section,
-                title: title,
-                link: '',
-                hasLink: false,
-                timestamp: new Date().toISOString(),
-                addedBy: userId
-            });
-            
-            await bot.sendMessage(chatId, 
-                `✅ 新闻已添加：\n📌 板块：${section}\n📰 标题：${title}\n💡 无链接`,
-                {
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: '🔙 返回主菜单', callback_data: 'main_menu' }]
-                        ]
-                    }
-                }
-            );
-            return;
         }
     }
     
@@ -642,12 +743,12 @@ bot.on('message', async (msg) => {
         if (!currentNewsSection) {
             currentNewsSection = text;
             await bot.sendMessage(chatId, 
-                `📌 板块已设置：${text}\n\n📰 请发送新闻标题：`
+                `📌 板块已设置：${text}\n\n请发送新闻标题：`
             );
         } else if (!currentNewsTitle) {
             currentNewsTitle = text;
             await bot.sendMessage(chatId, 
-                `📰 标题已设置：${text}\n\n🔗 请发送新闻链接（如果没有链接，请输入"无"）：`
+                `标题已设置：${text}\n\n🔗 请发送新闻链接（如果没有链接，请输入"无"）：`
             );
         } else if (!currentNewsLink) {
             currentNewsLink = text;
@@ -665,7 +766,7 @@ bot.on('message', async (msg) => {
                 });
                 
                 await bot.sendMessage(chatId, 
-                    `✅ 新闻已添加：\n📌 板块：${currentNewsSection}\n📰 标题：${currentNewsTitle}\n💡 无链接\n\n` +
+                    `✅ 新闻已添加：\n📌 板块：${currentNewsSection}\n标题：${currentNewsTitle}\n💡 无链接\n\n` +
                     '请继续发送下一条新闻的板块，或输入 "完成" 结束添加'
                 );
             } else {
@@ -687,7 +788,7 @@ bot.on('message', async (msg) => {
                 });
                 
                 await bot.sendMessage(chatId, 
-                    `✅ 新闻已添加：\n📌 板块：${currentNewsSection}\n📰 标题：${currentNewsTitle}\n🔗 链接：${currentNewsLink}\n\n` +
+                    `✅ 新闻已添加：\n📌 板块：${currentNewsSection}\n标题：${currentNewsTitle}\n🔗 链接：${currentNewsLink}\n\n` +
                     '请继续发送下一条新闻的板块，或输入 "完成" 结束添加'
                 );
             }
@@ -743,14 +844,13 @@ async function publishNews() {
         
         // 按板块组织新闻
         Object.keys(newsBySection).forEach((section, index) => {
-            message += `📌 ${section}\n`;
-            message += `${'─'.repeat(20)}\n`;
+            message += `${section}\n`;
             
             newsBySection[section].forEach((news, newsIndex) => {
                 if (news.hasLink) {
-                    message += `${newsIndex + 1}. <a href="${escapeHtml(news.link)}">📰 ${escapeHtml(news.title)}</a>\n\n`;
+                    message += `<a href="${escapeHtml(news.link)}">${escapeHtml(news.title)}</a>\n\n`;
                 } else {
-                    message += `${newsIndex + 1}. 📰 ${escapeHtml(news.title)}\n\n`;
+                    message += `${escapeHtml(news.title)}\n\n`;
                 }
             });
         });
